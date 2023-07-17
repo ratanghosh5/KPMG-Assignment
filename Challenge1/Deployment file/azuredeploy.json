@@ -1,0 +1,245 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {},
+	"variables": {},
+	"resources": [
+		{
+			"type": "Microsoft.Network/virtualNetworks",
+			"apiVersion": "2020-06-01",
+			"name": "myVNet",
+			"location": "[parameters('location')]",
+			"properties": {
+				"addressSpace": {
+					"addressPrefixes": [
+						"10.0.0.0/16"
+					]
+				}
+			}
+		},
+		{
+			"type": "Microsoft.Network/virtualNetworks/subnets",
+			"apiVersion": "2020-06-01",
+			"name": "myVNet/webSubnet",
+			"dependsOn": [
+				"[resourceId('Microsoft.Network/virtualNetworks', 'myVNet')]"
+			],
+			"properties": {
+				"addressPrefix": "10.0.1.0/24"
+			}
+		},
+		{
+			"type": "Microsoft.Network/publicIPAddresses",
+			"apiVersion": "2020-06-01",
+			"name": "webPublicIP",
+			"location": "[parameters('location')]",
+			"properties": {
+				"publicIPAllocationMethod": "Static"
+			}
+		},
+		{
+			"type": "Microsoft.Network/loadBalancers",
+			"apiVersion": "2020-06-01",
+			"name": "webLB",
+			"location": "[parameters('location')]",
+			"dependsOn": [
+				"[resourceId('Microsoft.Network/publicIPAddresses', 'webPublicIP')]"
+			],
+			"properties": {
+				"frontendIPConfigurations": [
+					{
+						"name": "webFrontendIP",
+						"properties": {
+							"publicIPAddress": {
+								"id": "[resourceId('Microsoft.Network/publicIPAddresses', 'webPublicIP')]"
+							}
+						}
+					}
+				],
+				"backendAddressPools": [
+					{
+						"name": "webBackendPool"
+					}
+				],
+				"probes": [
+					{
+						"name": "webProbe",
+						"properties": {
+							"protocol": "Tcp",
+							"port": 80,
+							"intervalInSeconds": 15,
+							"numberOfProbes": 2
+						}
+					}
+				]
+			}
+		},
+		{
+			"type": "Microsoft.Compute/virtualMachineScaleSets",
+			"apiVersion": "2021-07-01",
+			"name": "webVMSS",
+			"location": "[parameters('location')]",
+			"dependsOn": [
+				"[resourceId('Microsoft.Network/loadBalancers', 'webLB')]",
+				"[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVNet/webSubnet')]"
+			],
+			"properties": {
+				"sku": {
+					"name": "Standard_DS2_v2",
+					"tier": "Standard",
+					"capacity": 2
+				},
+				"upgradePolicy": {
+					"mode": "Automatic"
+				},
+				"virtualMachineProfile": {
+					"osProfile": {
+						"computerNamePrefix": "web",
+						"adminUsername": "azureuser",
+						"adminPassword": {
+							"reference": {
+								"keyVault": {
+									"id": "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.KeyVault/vaults/{vaultName}"
+								},
+								"secretName": "adminPasswordSecret"
+							}
+						}
+					},
+					"storageProfile": {
+						"osDisk": {
+							"createOption": "FromImage",
+							"caching": "ReadWrite"
+						},
+						"imageReference": {
+							"publisher": "Canonical",
+							"offer": "UbuntuServer",
+							"sku": "16.04-LTS",
+							"version": "latest"
+						}
+					},
+					"networkProfile": {
+						"networkInterfaceConfigurations": [
+							{
+								"name": "webNIC",
+								"properties": {
+									"primary": true,
+									"ipConfigurations": [
+										{
+											"name": "webNICConfig",
+											"properties": {
+												"subnet": {
+													"id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVNet/webSubnet')]"
+												},
+												"loadBalancerBackendAddressPools": [
+													{
+														"id": "[resourceId('Microsoft.Network/loadBalancers/backendAddressPools', 'webLB', 'webBackendPool')]"
+													}
+												]
+											}
+										}
+									]
+								}
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"type": "Microsoft.Compute/virtualMachines",
+			"apiVersion": "2021-07-01",
+			"name": "appVM",
+			"location": "[parameters('location')]",
+			"dependsOn": [
+				"[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVNet/webSubnet')]"
+			],
+			"properties": {
+				"hardwareProfile": {
+					"vmSize": "Standard_DS2_v2"
+				},
+				"storageProfile": {
+					"osDisk": {
+						"createOption": "FromImage"
+					},
+					"imageReference": {
+						"publisher": "Canonical",
+						"offer": "UbuntuServer",
+						"sku": "16.04-LTS",
+						"version": "latest"
+					}
+				},
+				"osProfile": {
+					"computerName": "appVM",
+					"adminUsername": "azureuser",
+					"adminPassword": {
+						"reference": {
+							"keyVault": {
+								"id": "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.KeyVault/vaults/{vaultName}"
+							},
+							"secretName": "adminPasswordSecret"
+						}
+					}
+				},
+				"networkProfile": {
+					"networkInterfaces": [
+						{
+							"id": "[resourceId('Microsoft.Network/networkInterfaces', 'appVMNIC')]"
+						}
+					]
+				}
+			}
+		},
+		{
+			"type": "Microsoft.Network/networkInterfaces",
+			"apiVersion": "2020-06-01",
+			"name": "appVMNIC",
+			"location": "[parameters('location')]",
+			"dependsOn": [
+				"[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVNet/webSubnet')]"
+			],
+			"properties": {
+				"ipConfigurations": [
+					{
+						"name": "appNICConfig",
+						"properties": {
+							"subnet": {
+								"id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVNet/webSubnet')]"
+							}
+						}
+					}
+				]
+			}
+		},
+		{
+			"type": "Microsoft.DBforPostgreSQL/servers",
+			"apiVersion": "2020-02-14-preview",
+			"name": "dbServer",
+			"location": "[parameters('location')]",
+			"properties": {
+				"administratorLogin": "myAdminUser",
+				"administratorLoginPassword": {
+					"reference": {
+						"keyVault": {
+							"id": "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.KeyVault/vaults/{vaultName}"
+						},
+						"secretName": "dbServerAdminPasswordSecret"
+					}
+				},
+				"version": "12"
+			}
+		},
+		{
+			"type": "Microsoft.DBforPostgreSQL/servers/databases",
+			"apiVersion": "2020-02-14-preview",
+			"name": "[concat('dbServer/', parameters('databaseName'))]",
+			"dependsOn": [
+				"[resourceId('Microsoft.DBforPostgreSQL/servers', 'dbServer')]"
+			],
+			"properties": {
+				"charset": "utf8",
+				"collation": "en_US.UTF8"
+			}
+		}
+	],
+	"outputs": {}
+}
